@@ -14,18 +14,39 @@ Streamlit dashboard turns the same pipeline into an interactive tool where
 a user can pick any two teams and see the prediction plus the reasoning
 behind it.
 
-## Repository contents
+## Repository structure
 
-| File / folder | What it is |
-|---|---|
-| `World_Cup_Prediction.ipynb` | Main deliverable — data cleaning, EDA, feature engineering, and three compared models (Logistic Regression, Random Forest, Gradient Boosting), executed top to bottom. |
-| `World_Cup_Report.docx` / `.pdf` | Written report (methodology, results, insights, limitations). |
-| `international_matches1.csv` | Primary modelling dataset (49,490 international matches, 1872–2026). |
-| `world_cup_matches1.csv`, `world_cups1.csv`, `2022_world_cup_matches1.csv` | Supporting World Cup context data and the 2022 prediction target. |
-| `model.py` | The notebook's pipeline (Elo ratings, form, head-to-head, Random Forest) refactored into reusable functions for the dashboard. |
-| `app.py` | Streamlit dashboard — bonus feature. |
-| `Dockerfile`, `.streamlit/`, `requirements.txt` | Containerisation for the dashboard (bonus). |
-| `DASHBOARD_GUIDE.md` | Script and talking points for demoing the dashboard. |
+```
+World-Cup-Match-Predictor/
+├── README.md
+├── requirements.txt
+├── Dockerfile
+├── .gitignore
+│
+├── data/                         Datasets (see "Dataset source" below)
+│   ├── international_matches1.csv
+│   ├── world_cup_matches1.csv
+│   ├── world_cups1.csv
+│   └── 2022_world_cup_matches1.csv
+│
+├── notebook/
+│   └── World_Cup_Prediction.ipynb   Main deliverable — cleaning, EDA,
+│                                     feature engineering, three compared
+│                                     models, and a live 2026 prediction
+│
+├── dashboard/                    Bonus feature — interactive Streamlit app
+│   ├── app.py                    UI — dropdowns, prediction, explanation
+│   ├── model.py                  Same Elo/feature/RF pipeline as the notebook
+│   ├── DASHBOARD_GUIDE.md        Demo script and Q&A prep
+│   └── .streamlit/config.toml    Theme config
+│
+├── report/
+│   ├── World_Cup_Report.docx
+│   └── World_Cup_Report.pdf
+│
+└── presentation/
+    └── World_Cup_Presentation.pptx
+```
 
 ## Dataset source
 
@@ -39,26 +60,32 @@ https://www.kaggle.com/datasets/martj42/international-football-results-from-1872
 
 ```bash
 pip install -r requirements.txt
-jupyter notebook World_Cup_Prediction.ipynb
+jupyter notebook notebook/World_Cup_Prediction.ipynb
 ```
-Run all cells top to bottom (Kernel → Restart & Run All) — no internet
-access is required, all four CSVs are read from this folder.
+Run all cells top to bottom (Kernel → Restart & Run All). The notebook
+reads its CSVs from `../data/` — open it from inside `notebook/` (the
+normal Jupyter behaviour) and the relative paths resolve automatically. No
+internet access is required.
 
 ### 2. Dashboard, without Docker
 
 ```bash
 pip install -r requirements.txt
+cd dashboard
 streamlit run app.py
 ```
-Opens at `http://localhost:8501`.
+Opens at `http://localhost:8501`. `model.py` looks for the dataset next to
+itself first, then falls back to `../data/` — so this works whether you run
+it from inside `dashboard/` (as above) or from the repo root.
 
 ### 3. Dashboard, with Docker
 
+From the **repo root** (the Dockerfile's COPY paths expect this):
 ```bash
 docker build -t worldcup-dashboard .
 docker run -p 8501:8501 worldcup-dashboard
 ```
-See `DASHBOARD_GUIDE.md` for the full walkthrough and demo script.
+See `dashboard/DASHBOARD_GUIDE.md` for the full walkthrough and demo script.
 
 ## Key results
 
@@ -70,10 +97,10 @@ See `DASHBOARD_GUIDE.md` for the full walkthrough and demo script.
 - Known limitation: per-class recall for Draw is low (0.02) due to class
   imbalance — see Section 4.1 of the report for the full breakdown and
   proposed remedies.
-- Live validation: Section 4.4 of the report (and Section 8b of the notebook)
-  predicts the France v Spain 2026 World Cup semifinal, made before kickoff
-  on 14 July — a genuine forecast that fixes the timing issue disclosed in
-  Section 4.3's 2022 example.
+- Live validation: Section 4.4 of the report (and Section 8b of the
+  notebook) predicts the France v Spain 2026 World Cup semifinal, made
+  before kickoff on 14 July — a genuine forecast that fixes the timing
+  issue disclosed in Section 4.3's 2022 example.
 
 ## AI usage disclosure
 
