@@ -1,110 +1,84 @@
-# World Cup Match Outcome Prediction
+# Predictive Modeling of FIFA World Cup Match Outcomes
 
-**Course:** BDS23114 Data Analytics | May 2026 Semester
-**Project:** Predictive Modeling of FIFA World Cup Match Outcomes — A Machine Learning Approach Using Historical International Match Data
-**Author:** Lee Wen Xin | Student ID: BIT-B2201F-2505004
-**Lecturer:** Dr. Ng Choon Ching
+BDS23114 Data Analytics — May 2026 Semester
+Author: Lee Wen Xin (Student ID: BIT-B2201F-2505004)
+Lecturer: Dr. Ng Choon Ching
 
----
+## Project description
 
-## 1. Project Overview
+This project applies the full data-analytics lifecycle — cleaning, EDA,
+feature engineering, and predictive modelling — to 150+ years of
+international football results, with the goal of both predicting match
+outcomes (Win / Draw / Loss) and explaining *why* a team wins. A bonus
+Streamlit dashboard turns the same pipeline into an interactive tool where
+a user can pick any two teams and see the prediction plus the reasoning
+behind it.
 
-This project applies the full data-analytics lifecycle to historical international football data. It has two goals:
+## Repository contents
 
-1. **Predict** the outcome of a match (Win / Draw / Loss, from the home team's perspective).
-2. **Explain** *why* one team beats another — which pre-match, measurable factors actually drive the result.
+| File / folder | What it is |
+|---|---|
+| `World_Cup_Prediction.ipynb` | Main deliverable — data cleaning, EDA, feature engineering, and three compared models (Logistic Regression, Random Forest, Gradient Boosting), executed top to bottom. |
+| `World_Cup_Report.docx` / `.pdf` | Written report (methodology, results, insights, limitations). |
+| `international_matches1.csv` | Primary modelling dataset (49,490 international matches, 1872–2026). |
+| `world_cup_matches1.csv`, `world_cups1.csv`, `2022_world_cup_matches1.csv` | Supporting World Cup context data and the 2022 prediction target. |
+| `model.py` | The notebook's pipeline (Elo ratings, form, head-to-head, Random Forest) refactored into reusable functions for the dashboard. |
+| `app.py` | Streamlit dashboard — bonus feature. |
+| `Dockerfile`, `.streamlit/`, `requirements.txt` | Containerisation for the dashboard (bonus). |
+| `DASHBOARD_GUIDE.md` | Script and talking points for demoing the dashboard. |
 
-Rather than using the final score as an input (which would be data leakage), the project engineers pre-match indicators of team strength — Elo rating, recent form, head-to-head record, home advantage — and uses interpretable models to quantify how much each factor contributes to the outcome.
+## Dataset source
 
-**Research questions:**
-- Can match outcomes be predicted more accurately than a naive baseline?
-- Which factors explain a win, and how much does each contribute?
-- Do these factors generalise to World Cup matches, including the 2022 tournament?
+International Football Results (1872–2026), Kaggle (user: martj42),
+continuously-updated snapshot:
+https://www.kaggle.com/datasets/martj42/international-football-results-from-1872-to-2017
 
-## 2. Repository Structure
+## Setup instructions
 
-```
-├── World_Cup_Prediction.ipynb   # Main analysis notebook: EDA, feature engineering, modelling
-├── World_Cup_Report.pdf         # Written report (max 10 pages)
-├── model.py                     # Reusable pipeline (Elo, features, training, prediction) used by the dashboard
-├── app.py                       # Streamlit dashboard — interactive version of the model
-├── Dockerfile                   # Container definition for the dashboard
-├── requirements.txt             # Python dependencies
-├── DASHBOARD_GUIDE.md           # Notes on running and presenting the dashboard
-├── international_matches1.csv   # Main dataset (17,769 international matches, 1872–2022)
-├── world_cup_matches1.csv       # World Cup match-level data (supporting context)
-├── world_cups1.csv              # World Cup tournament-level summaries (supporting context)
-└── 2022_world_cup_matches1.csv  # 2022 World Cup fixtures (used for live prediction demo)
-```
+### 1. Notebook (main deliverable)
 
-## 3. Dataset & Source Citation
-
-| File | Description | Source |
-|---|---|---|
-| `international_matches1.csv` | 17,769 international football results, 1872–2022 | Kaggle — International Football Results (martj42), continuously updated dataset. Snapshot used covers matches through September 2022. |
-| `world_cup_matches1.csv`, `world_cups1.csv` | World Cup match and tournament summaries | Kaggle — FIFA World Cup dataset. |
-| `2022_world_cup_matches1.csv` | 2022 World Cup group-stage fixtures (no scores, used for live prediction) ||
-
-https://www.kaggle.com/datasets/abhijitdahatonde/fifa-world-cup-all-dataset
-
-The dataset meets the project's minimum requirement of 500+ rows and 8+ columns, and contains no personally identifiable information.
-
-## 4. Setup Instructions
-
-### Run the notebook
 ```bash
 pip install -r requirements.txt
 jupyter notebook World_Cup_Prediction.ipynb
 ```
-Run all cells top to bottom. All four CSV files must be in the same folder as the notebook.
+Run all cells top to bottom (Kernel → Restart & Run All) — no internet
+access is required, all four CSVs are read from this folder.
 
-### Run the dashboard (without Docker)
+### 2. Dashboard, without Docker
+
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
-Then open `http://localhost:8501` in your browser.
+Opens at `http://localhost:8501`.
 
-### Run the dashboard (with Docker)
+### 3. Dashboard, with Docker
+
 ```bash
 docker build -t worldcup-dashboard .
 docker run -p 8501:8501 worldcup-dashboard
 ```
-Then open `http://localhost:8501` in your browser.
+See `DASHBOARD_GUIDE.md` for the full walkthrough and demo script.
 
-## 5. Methodology Summary
+## Key results
 
-- **Data cleaning:** date parsing, duplicate removal, sanity-checking extreme scorelines, target encoding (Win/Draw/Loss).
-- **Feature engineering:** Elo rating (leakage-safe, computed chronologically), rolling 5-match form, head-to-head record, home advantage, experience.
-- **Modelling:** chronological 80/20 train/test split (not random, to avoid leaking future matches into training). Three models compared — Logistic Regression, Random Forest (GridSearchCV-tuned), Gradient Boosting.
-- **Evaluation:** accuracy, precision, recall, macro F1. Best model selected by macro F1 to fairly balance the hard-to-predict Draw class.
-- **Explainability:** Random Forest feature importance, Logistic Regression coefficients (direction), and permutation importance (model-agnostic check) are used together to answer *why* teams win.
+- Random Forest is the selected model: 59.6% accuracy vs a 47.6% baseline
+  (always predicting the majority class, Win).
+- Elo rating difference is the dominant predictor of match outcome,
+  confirmed independently by Random Forest feature importance, Logistic
+  Regression coefficient direction, and permutation importance.
+- Known limitation: per-class recall for Draw is low (0.02) due to class
+  imbalance — see Section 4.1 of the report for the full breakdown and
+  proposed remedies.
+- Live validation: Section 4.4 of the report (and Section 8b of the notebook)
+  predicts the France v Spain 2026 World Cup semifinal, made before kickoff
+  on 14 July — a genuine forecast that fixes the timing issue disclosed in
+  Section 4.3's 2022 example.
 
-## 6. Key Results
+## AI usage disclosure
 
-| Model | Accuracy | Macro F1 |
-|---|---|---|
-| Baseline (always predict Win) | 0.482 | – |
-| Logistic Regression | 0.604 | 0.453 |
-| Random Forest | 0.600 | 0.451 |
-| **Gradient Boosting (best)** | 0.592 | **0.470** |
-
-All three models clearly beat the baseline. Team strength (Elo difference) is the dominant factor in explaining match outcomes.
-
-## 7. AI Usage Disclosure
-
-Parts of this project's code and documentation were developed with the assistance of AI tools. The student has reviewed, tested, and can explain the logic and purpose of every part of the code, including the Elo rating implementation, feature engineering, model training, and evaluation.
-
-## 8. Bonus Features
-
-- Interactive Streamlit dashboard with a "why this prediction" explanation panel
-- Dockerised deployment
-- Hyperparameter tuning via GridSearchCV with time-series cross-validation
-- Ensemble methods (Random Forest, Gradient Boosting)
-
-## 9. Limitations & Future Work
-
-- Draws are inherently hard to predict; an ordered or Poisson-based model may help.
-- No squad-level data (injuries, line-ups, red cards).
-- Elo cold-start issue for newer national teams.
-- Future work: player-level features, tournament-importance weighting, per-match feature contribution display.
+Parts of this project's code (the Elo rating system, feature-engineering
+pipeline, and model training/evaluation code) were developed with the
+assistance of AI tools. All code has been reviewed, tested, and is
+understood by the author, who can explain the logic and purpose of every
+line.
