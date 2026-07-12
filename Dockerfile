@@ -1,6 +1,6 @@
 # ---- Dockerfile: packages the dashboard + all its dependencies into one image ----
-# Build:  docker build -t worldcup-dashboard .
-# Run:    docker run -p 8501:8501 worldcup-dashboard
+# Build (from the repo root):  docker build -t worldcup-dashboard .
+# Run:                         docker run -p 8501:8501 worldcup-dashboard
 # Then open http://localhost:8501 in your browser.
 
 FROM python:3.12-slim
@@ -12,10 +12,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 3. Copy the app code, theme config, and the dataset into the image
-COPY model.py app.py ./
-COPY .streamlit ./.streamlit
-COPY international_matches1.csv ./
+# 3. Copy the app code, theme config, and the dataset into the image.
+#    Source paths match this repo's folder layout (dashboard/, data/);
+#    everything lands flat inside the image so model.py's default,
+#    same-directory CSV lookup keeps working unchanged.
+COPY dashboard/model.py dashboard/app.py ./
+COPY dashboard/.streamlit ./.streamlit
+COPY data/international_matches1.csv ./
 
 # 4. Streamlit serves on port 8501
 EXPOSE 8501
