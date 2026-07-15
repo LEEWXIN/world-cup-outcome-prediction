@@ -16,60 +16,91 @@ import model as M
 
 st.set_page_config(page_title="Match Outcome Predictor", page_icon="⚽", layout="centered")
 
-# ---------------------------------------------------------------------------
-# Design tokens — copied verbatim from the design handoff spec (OKLCH)
-# ---------------------------------------------------------------------------
-PAGE_BG      = "oklch(0.97 0.012 80)"
-CARD_BG      = "oklch(0.995 0.006 80)"
-BORDER       = "oklch(0.87 0.012 80)"
-DIVIDER      = "oklch(0.85 0.012 80)"
-TEXT_PRIMARY = "oklch(0.22 0.02 80)"
-TEXT_MUTED   = "oklch(0.5 0.02 80)"
-TEXT_SECOND  = "oklch(0.3 0.02 80)"
-GREEN        = "oklch(0.32 0.09 155)"   # pitch green — primary / home accent
-GREEN_LIGHT  = "oklch(0.82 0.05 155)"   # away side of strength bar
-AMBER_FILL   = "oklch(0.72 0.14 80)"
-AMBER_TEXT   = "oklch(0.48 0.13 80)"
-CLAY_FILL    = "oklch(0.58 0.13 35)"
-CLAY_TEXT    = "oklch(0.48 0.13 35)"
-GRAY_FILL    = "oklch(0.65 0.01 80)"
-GRAY_TEXT    = "oklch(0.45 0.01 80)"
-TRACK_BG     = "oklch(0.93 0.01 80)"
+def html(s: str) -> str:
+    """Strip leading whitespace from every line of a multi-line HTML/CSS
+    block before handing it to st.markdown. Streamlit's Markdown parser
+    treats any line starting with 4+ spaces (including a wrapped style=
+    attribute lined up for readability) as a code block and prints it as
+    literal text / breaks the tag instead of rendering it. HTML/CSS don't
+    care about whitespace, so stripping it per line is always safe."""
+    return "\n".join(line.lstrip() for line in s.strip("\n").split("\n"))
 
-st.markdown(f"""
+# ---------------------------------------------------------------------------
+# Design tokens — restyled to match the "Match Outcome Predictor" reference
+# mockup (blue accent, IBM Plex Sans + Mono, tighter/compact spacing).
+# Functionality below is unchanged — this is a CSS-only pass.
+# ---------------------------------------------------------------------------
+PAGE_BG      = "oklch(98% 0.004 95)"
+CARD_BG      = "#ffffff"
+BORDER       = "oklch(90% 0.005 95)"
+BORDER_INPUT = "oklch(87% 0.005 95)"
+DIVIDER      = "oklch(91% 0.005 95)"
+TEXT_PRIMARY = "oklch(22% 0.01 95)"
+TEXT_MUTED   = "oklch(55% 0.02 95)"
+TEXT_SECOND  = "oklch(30% 0.01 95)"
+BLUE         = "oklch(50% 0.1 255)"     # primary accent (replaces the old pitch green)
+BLUE_LIGHT   = "oklch(80% 0.05 255)"    # away side of the Elo strength bar
+AMBER_FILL   = "oklch(60% 0.13 70)"     # home-win colour
+AMBER_TEXT   = "oklch(55% 0.14 70)"
+CLAY_FILL    = "oklch(55% 0.15 25)"     # away-win colour
+CLAY_TEXT    = "oklch(52% 0.15 25)"
+GRAY_FILL    = "oklch(65% 0.01 95)"     # draw colour
+GRAY_TEXT    = "oklch(45% 0.01 95)"
+TRACK_BG     = "oklch(93% 0.005 95)"
+SUCCESS_BG   = "oklch(94% 0.03 155)"
+SUCCESS_TEXT = "oklch(32% 0.06 155)"
+FORM_WIN     = "oklch(58% 0.13 150)"    # distinct green for "W" form tiles — NOT the theme accent
+GREEN        = FORM_WIN                 # kept as an alias so downstream "GREEN" references (form
+GREEN_LIGHT  = BLUE_LIGHT                # tiles, bullet markers) stay green, matching the reference mockup
+
+st.markdown(html(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 .stApp {{ background: {PAGE_BG}; }}
-html, body, [class*="css"] {{ color: {TEXT_PRIMARY} !important; }}
-h1, h2, h3 {{ font-family: 'Space Grotesk', sans-serif !important; letter-spacing: -0.01em; color: {TEXT_PRIMARY} !important; }}
+html, body, [class*="css"] {{ color: {TEXT_PRIMARY} !important; font-family: 'IBM Plex Sans', sans-serif !important; }}
+h1, h2, h3 {{ font-family: 'IBM Plex Sans', sans-serif !important; font-weight: 700 !important; letter-spacing: -0.01em; color: {TEXT_PRIMARY} !important; }}
 
-.block-container {{ max-width: 1080px; padding-top: 40px; padding-bottom: 80px; }}
+.block-container {{ max-width: 1080px; padding-top: 32px; padding-bottom: 60px; }}
 
-/* restyle native Streamlit selects + checkbox to match the mono/compact spec */
+/* restyle native Streamlit selects + checkbox to match the reference mockup */
 div[data-baseweb="select"] > div {{
-    font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 15px !important; font-weight: 500 !important;
-    border: 1px solid {BORDER} !important; border-radius: 6px !important;
-    background: white !important; color: {TEXT_PRIMARY} !important;
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-size: 13.5px !important; font-weight: 600 !important;
+    border: 1px solid {BORDER_INPUT} !important; border-radius: 6px !important;
+    background: {PAGE_BG} !important; color: {TEXT_PRIMARY} !important;
 }}
 div[data-baseweb="select"] * {{ color: {TEXT_PRIMARY} !important; }}
 [data-testid="stCheckbox"] label p {{
-    font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: {TEXT_MUTED} !important;
+    font-family: 'IBM Plex Sans', sans-serif; font-size: 12.5px; font-weight: 500; color: {TEXT_SECOND} !important;
+}}
+input[type="number"], input[type="text"], input[type="date"] {{
+    border: 1px solid {BORDER_INPUT} !important; border-radius: 6px !important;
+    background: {PAGE_BG} !important; font-family: 'IBM Plex Mono', monospace !important;
+}}
+.stButton > button, .stFormSubmitButton > button {{
+    background: {BLUE} !important; color: #fff !important; border: none !important;
+    border-radius: 6px !important; font-weight: 600 !important; font-size: 12.5px !important;
+}}
+[data-testid="stExpander"] {{
+    background: {CARD_BG}; border: 1px solid {BORDER} !important; border-radius: 10px !important;
+}}
+[data-testid="stExpander"] summary {{
+    font-family: 'IBM Plex Sans', sans-serif !important; font-size: 12.5px !important; font-weight: 600 !important;
 }}
 
 .card {{
     background: {CARD_BG}; border: 1px solid {BORDER}; border-radius: 10px;
-    padding: 26px 32px; margin-bottom: 16px;
+    padding: 18px 20px; margin-bottom: 14px;
 }}
 .eyebrow {{
-    font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-transform: uppercase;
-    letter-spacing: 0.14em; color: {TEXT_MUTED}; margin-bottom: 8px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.05em; color: {TEXT_MUTED}; margin-bottom: 10px;
 }}
-.grid-2 {{ display: grid; grid-template-columns: 1.3fr 1fr; gap: 36px; }}
-.divider-left {{ border-left: 1px solid {BORDER}; padding-left: 32px; }}
+.grid-2 {{ display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; }}
+.divider-left {{ border-left: none; padding-left: 0; }}
 </style>
-""", unsafe_allow_html=True)
+"""), unsafe_allow_html=True)
 
 
 # Train once, then cache so the app is instant on every interaction. This
@@ -109,12 +140,12 @@ history = st.session_state.history
 # ---------------------------------------------------------------------------
 # Top bar — eyebrow + title (left), three stat readouts (right)
 # ---------------------------------------------------------------------------
-st.markdown(f"""
+st.markdown(html(f"""
 <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap;
             border-bottom:1px solid {DIVIDER}; padding-bottom:18px; margin-bottom:22px;">
   <div>
     <div style="font-family:'IBM Plex Mono',monospace; font-size:13px; text-transform:uppercase;
-                letter-spacing:0.16em; color:{GREEN}; font-weight:500; margin-bottom:6px;">
+                letter-spacing:0.16em; color:{BLUE}; font-weight:500; margin-bottom:6px;">
       Data Analytics Project
     </div>
     <h1 style="font-size:34px; font-weight:700; margin:0; color:{TEXT_PRIMARY};">Match Outcome Predictor</h1>
@@ -122,7 +153,7 @@ st.markdown(f"""
   <div style="display:flex; gap:20px;">
     <div style="border-left:1px solid {DIVIDER}; padding-left:20px;">
       <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; text-transform:uppercase; color:{TEXT_MUTED};">Accuracy</div>
-      <div style="font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:600; color:{GREEN};">{metrics['accuracy']*100:.1f}%</div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:600; color:{BLUE};">{metrics['accuracy']*100:.1f}%</div>
     </div>
     <div style="border-left:1px solid {DIVIDER}; padding-left:20px;">
       <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; text-transform:uppercase; color:{TEXT_MUTED};">Baseline</div>
@@ -134,7 +165,7 @@ st.markdown(f"""
     </div>
   </div>
 </div>
-""", unsafe_allow_html=True)
+"""), unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Control row — team pickers + home-venue checkbox
@@ -204,7 +235,7 @@ else:
                 f"<span style='color:{TEXT_PRIMARY}; font-weight:600;'>{home} {hw}W</span> — "
                 f"{hd}D — <span style='color:{TEXT_PRIMARY}; font-weight:600;'>{away} {aw}W</span></div>")
 
-st.markdown(f"""
+st.markdown(html(f"""
 <div class="card">
   <div class="grid-2">
     <div>
@@ -219,8 +250,8 @@ st.markdown(f"""
         </div>
       </div>
       <div style="display:flex; height:9px; border-radius:4px; overflow:hidden; margin-bottom:16px;">
-        <div style="width:{h_share:.1f}%; background:{GREEN};"></div>
-        <div style="width:{a_share:.1f}%; background:{GREEN_LIGHT};"></div>
+        <div style="width:{h_share:.1f}%; background:{AMBER_FILL};"></div>
+        <div style="width:{a_share:.1f}%; background:{CLAY_FILL};"></div>
       </div>
       <div style="display:flex; justify-content:space-between; margin-bottom:16px;">
         {ticks_html(last5_h, "left")}
@@ -261,7 +292,7 @@ st.markdown(f"""
     </div>
   </div>
 </div>
-""", unsafe_allow_html=True)
+"""), unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Why panel — explanation bullets (left) | global feature importance (right)
@@ -293,7 +324,7 @@ narrative_html = (
 
 bullets_html = "".join(
     f"<div style='display:flex; gap:8px; margin-bottom:10px;'>"
-    f"<span style='color:{GREEN}; font-family:\"IBM Plex Mono\",monospace;'>—</span>"
+    f"<span style='color:{BLUE}; font-family:\"IBM Plex Mono\",monospace;'>—</span>"
     f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:15px; line-height:1.6; color:{TEXT_SECOND};'>{b}</span></div>"
     for b in [bullet1, bullet2, bullet3]
 )
@@ -303,11 +334,11 @@ importance_html = "".join(
     f"<div style='display:flex; justify-content:space-between; font-size:13px; color:{TEXT_SECOND}; margin-bottom:5px;'>"
     f"<span>{name}</span><span style='font-family:\"IBM Plex Mono\",monospace; font-weight:600;'>{pct:.0f}%</span></div>"
     f"<div style='height:8px; border-radius:4px; background:{TRACK_BG};'>"
-    f"<div style='width:{pct:.1f}%; height:100%; border-radius:3px; background:{GREEN};'></div></div></div>"
+    f"<div style='width:{pct:.1f}%; height:100%; border-radius:3px; background:{BLUE};'></div></div></div>"
     for name, pct in groups.items()
 )
 
-st.markdown(f"""
+st.markdown(html(f"""
 <div class="card">
   <div class="grid-2">
     <div>
@@ -321,7 +352,7 @@ st.markdown(f"""
     </div>
   </div>
 </div>
-""", unsafe_allow_html=True)
+"""), unsafe_allow_html=True)
 
 with st.expander("Show the raw feature values fed to the model"):
     st.dataframe(pd.DataFrame([feat]).T.rename(columns={0: "value"}))
@@ -402,10 +433,10 @@ with st.expander("➕ Add a completed match result (update Elo & form live)"):
             "matches would need to be appended to the CSV and the model periodically retrained."
         )
 
-st.markdown(f"""
+st.markdown(html(f"""
 <div style="text-align:center; margin-top:28px; padding-top:18px; border-top:1px solid {DIVIDER};
             font-family:'IBM Plex Mono',monospace; font-size:12px; color:{TEXT_MUTED};">
   Trained on {metrics['n_train'] + metrics['n_test']:,} international matches, 1872–2022 ·
   Source: Kaggle — International Football Results (martj42)
 </div>
-""", unsafe_allow_html=True)
+"""), unsafe_allow_html=True)
