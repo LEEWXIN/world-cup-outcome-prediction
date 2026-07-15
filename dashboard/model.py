@@ -15,11 +15,43 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score
 
-# The nine pre-match features the model learns from (same as the notebook)
+# Match-importance one-hot columns (Friendly is the dropped/baseline category
+# - same convention as the notebook's pd.get_dummies(..., drop_first=True)).
+MATCH_TYPE_COLS = ["MatchType_Other Competition", "MatchType_Qualifier", "MatchType_World Cup"]
+
+# The pre-match features the model learns from - same set as the notebook,
+# including the two features added later (rest days, match importance) so
+# the dashboard and the notebook stay in sync.
 FEATURES = ["Elo_Diff", "Home_Elo", "Away_Elo", "Form_Pts_Diff", "Form_GF_Diff",
-            "Form_GA_Diff", "H2H_Diff", "Exp_Diff", "Home_Adv"]
+            "Form_GA_Diff", "H2H_Diff", "Exp_Diff", "Home_Adv",
+            "Rest_Days_Diff"] + MATCH_TYPE_COLS
 
 BASE_ELO, K = 1500, 30
+
+
+def bucket_tournament(t):
+    """Collapse the ~200 raw Tournament names into 4 buckets - same rule as
+    the notebook's Section 5.5, so 'Match_Type' means the same thing in both
+    places."""
+    if t == "Friendly":
+        return "Friendly"
+    if "qualification" in str(t).lower():
+        return "Qualifier"
+    if t == "FIFA World Cup":
+        return "World Cup"
+    return "Other Competition"
+
+
+def add_match_type(df):
+    """One-hot encode match importance (Section 5.5 in the notebook).
+    Returns df with the MATCH_TYPE_COLS columns added."""
+    df["Match_Type"] = df["Tournament"].apply(bucket_tournament)
+    dummies = pd.get_dummies(df["Match_Type"], prefix="MatchType", drop_first=True).astype(int)
+    missing = [c for c in MATCH_TYPE_COLS if c not in dummies.columns]
+    for c in missing:
+        dummies[c] = 0  # category not present in this slice of data - keep the column, all zeros
+    df = pd.concat([df, dummies[MATCH_TYPE_COLS]], axis=1)
+    return df
 
 
 def load_and_prepare(csv_path):
@@ -37,18 +69,31 @@ def load_and_prepare(csv_path):
 
 
 def add_elo(df):
-    """Compute a running Elo rating for every team. Returns df + final ratings dict."""
+    """Compute a running Elo rating for every team. Returns df + final ratings dict.
+
+    Elo is inherently sequential (each match's update depends on the state
+    left by all earlier matches), so this can't be fully vectorised away -
+    but iterating over plain numpy arrays (via zip) instead of df.iterrows()
+    avoids constructing a pandas Series for every one of the ~49,500 rows,
+    which is where iterrows() loses most of its time. Same math, same
+    results, much less overhead - this is the main fix for the slow cold
+    start (first page load / first Docker container run) that was mistaken
+    for a UI bug: the app looked "stuck" because this loop hadn't finished.
+    """
     elo, home_elo, away_elo = {}, [], []
-    for _, r in df.iterrows():
-        h, a = r["Home Team"], r["Away Team"]
+    homes = df["Home Team"].to_numpy()
+    aways = df["Away Team"].to_numpy()
+    home_goals_arr = df["Home Goals"].to_numpy()
+    away_goals_arr = df["Away Goals"].to_numpy()
+    for h, a, home_goals, away_goals in zip(homes, aways, home_goals_arr, away_goals_arr):
         eh, ea = elo.get(h, BASE_ELO), elo.get(a, BASE_ELO)
         home_elo.append(eh)
         away_elo.append(ea)                                    # pre-match (no leakage)
         exp_h = 1 / (1 + 10 ** ((ea - eh) / 400))
-        if   r["Home Goals"] > r["Away Goals"]: s_h = 1.0
-        elif r["Home Goals"] < r["Away Goals"]: s_h = 0.0
-        else:                                   s_h = 0.5
-        margin = max(np.log(abs(r["Home Goals"] - r["Away Goals"]) + 1), 1)
+        if   home_goals > away_goals: s_h = 1.0
+        elif home_goals < away_goals: s_h = 0.0
+        else:                         s_h = 0.5
+        margin = max(np.log(abs(home_goals - away_goals) + 1), 1)
         elo[h] = eh + K * margin * (s_h - exp_h)
         elo[a] = ea + K * margin * ((1 - s_h) - (1 - exp_h))
     df["Home_Elo"], df["Away_Elo"] = home_elo, away_elo
@@ -61,22 +106,47 @@ def add_form_and_h2h(df):
     Returns df + a 'latest form per team' table + the h2h dict + the long
     (one-row-per-team-per-match) table, which the dashboard needs to draw
     each team's last-5 W/D/L result squares."""
-    rows = []
-    for _, r in df.iterrows():
-        pts_h = 3 if r["Result"] == "Win" else (1 if r["Result"] == "Draw" else 0)
-        pts_a = 3 if r["Result"] == "Loss" else (1 if r["Result"] == "Draw" else 0)
-        letter_h = "W" if pts_h == 3 else ("D" if pts_h == 1 else "L")
-        letter_a = "W" if pts_a == 3 else ("D" if pts_a == 1 else "L")
-        rows.append((r["match_id"], r["Date"], r["Home Team"], r["Home Goals"], r["Away Goals"], pts_h, letter_h))
-        rows.append((r["match_id"], r["Date"], r["Away Team"], r["Away Goals"], r["Home Goals"], pts_a, letter_a))
-    long = pd.DataFrame(
-        rows, columns=["match_id", "Date", "Team", "GF", "GA", "Pts", "Result_Letter"]
-    ).sort_values("Date").reset_index(drop=True)
+    # Build the "long" (one row per team per match) table with plain pandas
+    # ops instead of a Python-level loop appending 2 x len(df) tuples one at
+    # a time - same output, no per-row overhead.
+    pts_h = np.select([df["Result"] == "Win", df["Result"] == "Draw"], [3, 1], default=0)
+    pts_a = np.select([df["Result"] == "Loss", df["Result"] == "Draw"], [3, 1], default=0)
+    letter_h = np.select([pts_h == 3, pts_h == 1], ["W", "D"], default="L")
+    letter_a = np.select([pts_a == 3, pts_a == 1], ["W", "D"], default="L")
+
+    # "_order" reproduces the exact tie-break order the old row-by-row loop
+    # produced (home-row then away-row for each match, in df's original
+    # chronological order): df is already sorted by Date, so on matches
+    # that share the same calendar date, sort_values("Date") below is a
+    # stable sort and needs a same-valued secondary key to land in the same
+    # home-then-away, match-by-match order as before - otherwise concat()
+    # would group all home rows before all away rows on tied dates instead
+    # of interleaving them, which very slightly shifts the rolling-5 form
+    # window for the handful of teams that ever played twice on one date.
+    home_rows = pd.DataFrame({
+        "match_id": df["match_id"], "Date": df["Date"], "Team": df["Home Team"],
+        "GF": df["Home Goals"], "GA": df["Away Goals"], "Pts": pts_h, "Result_Letter": letter_h,
+        "_order": np.arange(len(df)) * 2,
+    })
+    away_rows = pd.DataFrame({
+        "match_id": df["match_id"], "Date": df["Date"], "Team": df["Away Team"],
+        "GF": df["Away Goals"], "GA": df["Home Goals"], "Pts": pts_a, "Result_Letter": letter_a,
+        "_order": np.arange(len(df)) * 2 + 1,
+    })
+    long = (pd.concat([home_rows, away_rows], ignore_index=True)
+            .sort_values(["Date", "_order"])
+            .drop(columns="_order")
+            .reset_index(drop=True))
     g = long.groupby("Team")
     long["form_pts"] = g["Pts"].transform(lambda x: x.shift().rolling(5, min_periods=1).mean())
     long["form_gf"]  = g["GF"].transform(lambda x: x.shift().rolling(5, min_periods=1).mean())
     long["form_ga"]  = g["GA"].transform(lambda x: x.shift().rolling(5, min_periods=1).mean())
     long["matches_played"] = g.cumcount()
+    # Rest days since each team's own previous match - same rule as the
+    # notebook's Section 5.3 (capped at 60: beyond ~2 months it reflects
+    # inactivity between tournaments, not short-term fatigue).
+    long["rest_days"] = g["Date"].diff().dt.days
+    long["rest_days"] = long["rest_days"].clip(upper=60)
 
     feat = long.groupby(["match_id", "Team"]).first().reset_index()
     H, A = feat.add_prefix("H_"), feat.add_prefix("A_")
@@ -86,28 +156,43 @@ def add_form_and_h2h(df):
     df["Form_GF_Diff"]  = df["H_form_gf"]  - df["A_form_gf"]
     df["Form_GA_Diff"]  = df["H_form_ga"]  - df["A_form_ga"]
     df["Exp_Diff"]      = df["H_matches_played"] - df["A_matches_played"]
+    df["Rest_Days_Diff"] = df["H_rest_days"] - df["A_rest_days"]
 
     # head-to-head differential (home team's historical edge vs this opponent)
     # h2h: (wins_for_key0, total) used as a modelling feature
     # h2h_record: full W/D/L breakdown, keyed the same way, used for display
     # h2h_matches: full list of individual past matches per pair, for a
     # "show me the actual games" expander in the dashboard
+    # Head-to-head bookkeeping is stateful (each match's diff depends on every
+    # earlier meeting of the same pair), so - like Elo - it can't be fully
+    # vectorised, but looping over numpy arrays (instead of df.iterrows(),
+    # which builds a pandas Series per row) removes the same per-row
+    # overhead that was slowing down the Elo loop.
     h2h, h2h_record, h2h_matches, diffs = {}, {}, {}, []
-    for _, r in df.iterrows():
-        key = tuple(sorted([r["Home Team"], r["Away Team"]]))
+    home_teams = df["Home Team"].to_numpy()
+    away_teams = df["Away Team"].to_numpy()
+    results = df["Result"].to_numpy()
+    dates = df["Date"].to_numpy()
+    home_goals_arr = df["Home Goals"].to_numpy()
+    away_goals_arr = df["Away Goals"].to_numpy()
+
+    for home_t, away_t, result, date, hg, ag in zip(
+        home_teams, away_teams, results, dates, home_goals_arr, away_goals_arr
+    ):
+        key = tuple(sorted([home_t, away_t]))
         w, t = h2h.get(key, (0, 0))
         if t == 0:
             diffs.append(0.0)
         else:
             rate_first = w / t
-            diffs.append((rate_first - 0.5) * 2 if key[0] == r["Home Team"]
+            diffs.append((rate_first - 0.5) * 2 if key[0] == home_t
                          else ((1 - rate_first) - 0.5) * 2)
-        first_win = 1 if ((key[0] == r["Home Team"] and r["Result"] == "Win") or
-                          (key[0] == r["Away Team"] and r["Result"] == "Loss")) else 0
+        first_win = 1 if ((key[0] == home_t and result == "Win") or
+                          (key[0] == away_t and result == "Loss")) else 0
         h2h[key] = (w + first_win, t + 1)
 
         rec = h2h_record.get(key, {"first_wins": 0, "second_wins": 0, "draws": 0, "total": 0})
-        if r["Result"] == "Draw":
+        if result == "Draw":
             rec["draws"] += 1
         elif first_win:
             rec["first_wins"] += 1
@@ -117,8 +202,8 @@ def add_form_and_h2h(df):
         h2h_record[key] = rec
 
         h2h_matches.setdefault(key, []).append({
-            "date": r["Date"], "home": r["Home Team"], "away": r["Away Team"],
-            "home_goals": int(r["Home Goals"]), "away_goals": int(r["Away Goals"]),
+            "date": pd.Timestamp(date), "home": home_t, "away": away_t,
+            "home_goals": int(hg), "away_goals": int(ag),
         })
 
     df["H2H_Diff"] = diffs
@@ -134,12 +219,17 @@ def train_pipeline(csv_path="international_matches1.csv"):
     df = load_and_prepare(csv_path)
     df, elo = add_elo(df)
     df, latest_form, h2h, history, h2h_record, h2h_matches = add_form_and_h2h(df)
+    df = add_match_type(df)
 
     data = df.dropna(subset=FEATURES + ["Result"]).reset_index(drop=True)
     cut = int(len(data) * 0.8)                       # chronological 80/20 split
     train, test = data.iloc[:cut], data.iloc[cut:]
+    # n_jobs=2 instead of -1: capped thread count avoids CPU-quota contention
+    # inside a resource-limited Docker container (a plausible cause of the
+    # occasional hang/disconnect when clicking Predict), while still keeping
+    # the RandomForest fast on the un-containerised / local-run case.
     model = RandomForestClassifier(n_estimators=200, max_depth=12,
-                                   min_samples_leaf=20, random_state=42, n_jobs=-1)
+                                   min_samples_leaf=20, random_state=42, n_jobs=2)
     model.fit(train[FEATURES], train["Result"])
 
     pred = model.predict(test[FEATURES])
@@ -192,9 +282,16 @@ def last5_string(history, team, n=5):
     return "".join(rows["Result_Letter"].tolist())
 
 
-def predict_match(model, elo, latest_form, home, away, home_advantage=False, h2h=None):
+def predict_match(model, elo, latest_form, home, away, home_advantage=False, h2h=None,
+                  match_type="World Cup"):
     """Predict a single matchup and return the label, probabilities, and the
-    feature values that explain the prediction."""
+    feature values that explain the prediction.
+
+    match_type: which MATCH_TYPE_COLS bucket to assume for this hypothetical
+    fixture ("Friendly", "Qualifier", "Other Competition", or "World Cup").
+    Rest days aren't knowable for a hypothetical/future fixture, so - same as
+    the notebook's feats_for() - we assume no rest advantage either way
+    rather than guess."""
     eh, ea = elo.get(home, BASE_ELO), elo.get(away, BASE_ELO)
     hp, hgf, hga, hmp = _form_for(latest_form, home)
     ap, agf, aga, amp = _form_for(latest_form, away)
@@ -204,7 +301,10 @@ def predict_match(model, elo, latest_form, home, away, home_advantage=False, h2h
         "Form_Pts_Diff": hp - ap, "Form_GF_Diff": hgf - agf,
         "Form_GA_Diff": hga - aga, "H2H_Diff": h2h_diff,
         "Exp_Diff": hmp - amp, "Home_Adv": 1 if home_advantage else 0,
+        "Rest_Days_Diff": 0,
     }
+    for col in MATCH_TYPE_COLS:
+        feat[col] = 1 if col == f"MatchType_{match_type}" else 0
     X = pd.DataFrame([feat])[FEATURES]
     label = model.predict(X)[0]
     proba = dict(zip(model.classes_, model.predict_proba(X)[0]))
@@ -277,6 +377,16 @@ def narrative_sentence(feat, groups, home, away, label):
             if feat["Home_Adv"] != 1:
                 continue
             reasons.append({"pct": pct, "leader": home, "text": f"{home} gets a home-venue boost"})
+
+        elif name == "Fixture context (rest days + match importance)":
+            rd = feat.get("Rest_Days_Diff", 0)
+            if abs(rd) >= 3:
+                leader, trailer = (home, away) if rd > 0 else (away, home)
+                reasons.append({"pct": pct, "leader": leader,
+                                 "text": f"{leader} has had {abs(rd):.0f} more rest days than {trailer} "
+                                         f"before this match"})
+            else:
+                continue
 
         elif name == "Other factors (head-to-head, experience)":
             hd = feat["H2H_Diff"]

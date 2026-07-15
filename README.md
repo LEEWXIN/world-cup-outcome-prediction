@@ -72,11 +72,15 @@ internet access is required.
 ```bash
 pip install -r requirements.txt
 cd dashboard
+cp ../data/international_matches1.csv .   # model.py reads the CSV from the
+                                           # current directory - no ../data/
+                                           # fallback exists, so it must be
+                                           # copied in first when running this
+                                           # way (Docker does this for you
+                                           # automatically at build time)
 streamlit run app.py
 ```
-Opens at `http://localhost:8501`. `model.py` looks for the dataset next to
-itself first, then falls back to `../data/` — so this works whether you run
-it from inside `dashboard/` (as above) or from the repo root.
+Opens at `http://localhost:8501`.
 
 ### 3. Dashboard, with Docker
 
@@ -85,6 +89,14 @@ From the **repo root** (the Dockerfile's COPY paths expect this):
 docker build -t worldcup-dashboard .
 docker run -p 8501:8501 worldcup-dashboard
 ```
+The build step also runs `precompute.py`, which trains the model and
+pre-computes all Elo/form/head-to-head features once and bakes the result
+into the image as `model_cache.pkl`. This is why the very first `docker
+build` takes a little longer (a one-time cost) — but it means every
+`docker run` afterwards (including every restart while testing or
+recording a demo) loads that pre-built result instantly instead of
+re-running the full pipeline from scratch each time.
+
 See `dashboard/DASHBOARD_GUIDE.md` for the full walkthrough and demo script.
 
 ## Key results

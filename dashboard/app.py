@@ -10,9 +10,13 @@ Jupyter notebook, imported from model.py.
 Run locally:   streamlit run app.py
 Run in Docker: see Dockerfile / DASHBOARD_GUIDE.md
 """
+import os
+import pickle
 import streamlit as st
 import pandas as pd
 import model as M
+
+MODEL_CACHE_PATH = "model_cache.pkl"
 
 st.set_page_config(page_title="Match Outcome Predictor", page_icon="soccer", layout="centered")
 
@@ -103,12 +107,33 @@ input[type="number"], input[type="text"], input[type="date"] {{
 """), unsafe_allow_html=True)
 
 
-# Train once, then cache so the app is instant on every interaction. This
-# returns the "base" state trained purely from the CSV.
-@st.cache_resource(show_spinner="Building features and training the model (first load only)...")
+# Train once, then cache so the app is instant on every interaction within
+# a session. This returns the "base" state trained purely from the CSV.
+#
+# On top of that, check for a pre-computed model_cache.pkl first (see
+# precompute.py / Dockerfile): @st.cache_resource only avoids re-running
+# this on every widget interaction WITHIN one running process - it gives
+# no benefit across container restarts, since a fresh `docker run` is a
+# fresh process with an empty cache. The pickle is what actually removes
+# the recurring cold-start delay every time the container restarts, which
+# is what was happening during repeated testing.
+@st.cache_resource(show_spinner="Loading pre-trained model...")
 def load_model():
-    mdl, elo, latest_form, metrics, h2h, history, h2h_record, h2h_matches = M.train_pipeline("international_matches1.csv")
-    teams = sorted(elo.keys())
+    if os.path.exists(MODEL_CACHE_PATH):
+        with open(MODEL_CACHE_PATH, "rb") as f:
+            c = pickle.load(f)
+        return (c["mdl"], c["elo"], c["latest_form"], c["metrics"], c["h2h"],
+                c["history"], c["h2h_record"], c["h2h_matches"], c["teams"])
+
+    # Fallback for local runs where precompute.py hasn't been run (e.g.
+    # `streamlit run app.py` straight from a fresh checkout, no Docker) -
+    # compute everything live, exactly as before.
+    with st.spinner("No pre-computed cache found - building features and "
+                     "training the model from scratch (first load only)..."):
+        mdl, elo, latest_form, metrics, h2h, history, h2h_record, h2h_matches = (
+            M.train_pipeline("international_matches1.csv")
+        )
+        teams = sorted(elo.keys())
     return mdl, elo, latest_form, metrics, h2h, history, h2h_record, h2h_matches, teams
 
 
@@ -338,6 +363,7 @@ groups = {
     "Elo rating gap": imp[["Elo_Diff", "Home_Elo", "Away_Elo"]].sum(),
     "Recent form (last 5 matches)": imp[["Form_Pts_Diff", "Form_GF_Diff", "Form_GA_Diff"]].sum(),
     "Home advantage": imp[["Home_Adv"]].sum(),
+    "Fixture context (rest days + match importance)": imp[["Rest_Days_Diff"] + M.MATCH_TYPE_COLS].sum(),
     "Other factors (head-to-head, experience)": imp[["H2H_Diff", "Exp_Diff"]].sum(),
 }
 total = sum(groups.values())

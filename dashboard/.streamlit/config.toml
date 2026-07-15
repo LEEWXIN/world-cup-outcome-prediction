@@ -9,4 +9,4 @@ font = "monospace"
 [server]
 headless = true
 enableCORS = false
-enableXsrfProtection = true
+enableXsrfProtection = false

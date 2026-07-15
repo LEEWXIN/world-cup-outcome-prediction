@@ -16,12 +16,22 @@ RUN pip install --no-cache-dir -r requirements.txt
 #    Source paths match this repo's folder layout (dashboard/, data/);
 #    everything lands flat inside the image so model.py's default,
 #    same-directory CSV lookup keeps working unchanged.
-COPY dashboard/model.py dashboard/app.py ./
+COPY dashboard/model.py dashboard/app.py dashboard/precompute.py ./
 COPY dashboard/.streamlit ./.streamlit
 COPY data/international_matches1.csv ./
 
-# 4. Streamlit serves on port 8501
+# 4. Pre-train the model and pre-compute Elo/form/H2H once, at BUILD time,
+#    and bake the result into the image as model_cache.pkl. Without this,
+#    that (still nontrivial) computation re-runs from scratch every time a
+#    fresh container starts, which is what made every `docker run` feel
+#    like it "hangs" for a while before the app responds. Because this is
+#    a normal Docker layer, it automatically re-runs (and the cache
+#    automatically refreshes) whenever model.py or the CSV change - it
+#    can't go silently stale.
+RUN python precompute.py
+
+# 5. Streamlit serves on port 8501
 EXPOSE 8501
 
-# 5. Start the dashboard, listening on all interfaces so it's reachable from the host
+# 6. Start the dashboard, listening on all interfaces so it's reachable from the host
 CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
