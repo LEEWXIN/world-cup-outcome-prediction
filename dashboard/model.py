@@ -90,7 +90,9 @@ def add_form_and_h2h(df):
     # head-to-head differential (home team's historical edge vs this opponent)
     # h2h: (wins_for_key0, total) used as a modelling feature
     # h2h_record: full W/D/L breakdown, keyed the same way, used for display
-    h2h, h2h_record, diffs = {}, {}, []
+    # h2h_matches: full list of individual past matches per pair, for a
+    # "show me the actual games" expander in the dashboard
+    h2h, h2h_record, h2h_matches, diffs = {}, {}, {}, []
     for _, r in df.iterrows():
         key = tuple(sorted([r["Home Team"], r["Away Team"]]))
         w, t = h2h.get(key, (0, 0))
@@ -114,19 +116,24 @@ def add_form_and_h2h(df):
         rec["total"] += 1
         h2h_record[key] = rec
 
+        h2h_matches.setdefault(key, []).append({
+            "date": r["Date"], "home": r["Home Team"], "away": r["Away Team"],
+            "home_goals": int(r["Home Goals"]), "away_goals": int(r["Away Goals"]),
+        })
+
     df["H2H_Diff"] = diffs
     df["Home_Adv"] = df["Home Stadium or Not"]
 
     latest_form = (long.sort_values("Date").groupby("Team")
                    .last()[["form_pts", "form_gf", "form_ga", "matches_played"]])
-    return df, latest_form, h2h, long, h2h_record
+    return df, latest_form, h2h, long, h2h_record, h2h_matches
 
 
 def train_pipeline(csv_path="international_matches1.csv"):
     """Run the whole pipeline and return everything the dashboard needs."""
     df = load_and_prepare(csv_path)
     df, elo = add_elo(df)
-    df, latest_form, h2h, history, h2h_record = add_form_and_h2h(df)
+    df, latest_form, h2h, history, h2h_record, h2h_matches = add_form_and_h2h(df)
 
     data = df.dropna(subset=FEATURES + ["Result"]).reset_index(drop=True)
     cut = int(len(data) * 0.8)                       # chronological 80/20 split
@@ -140,7 +147,7 @@ def train_pipeline(csv_path="international_matches1.csv"):
                "macro_f1": f1_score(test["Result"], pred, average="macro"),
                "baseline": (test["Result"] == "Win").mean(),
                "n_train": len(train), "n_test": len(test)}
-    return model, elo, latest_form, metrics, h2h, history, h2h_record
+    return model, elo, latest_form, metrics, h2h, history, h2h_record, h2h_matches
 
 
 def _form_for(latest_form, team):
@@ -205,13 +212,212 @@ def predict_match(model, elo, latest_form, home, away, home_advantage=False, h2h
     return readable, label, proba, feat
 
 
+def elo_rank(elo, team):
+    """Return (rank, total_teams) for this team's current Elo, rank 1 = strongest."""
+    if team not in elo:
+        return None, len(elo)
+    ranked = sorted(elo.items(), key=lambda kv: -kv[1])
+    for i, (t, _) in enumerate(ranked, start=1):
+        if t == team:
+            return i, len(ranked)
+    return None, len(ranked)
+
+
+def h2h_match_list(h2h_matches, home, away, n=5):
+    """Return the last n individual past meetings between these two teams,
+    most recent first, oriented to (home, away) regardless of which side
+    was 'home' historically."""
+    key = tuple(sorted([home, away]))
+    matches = h2h_matches.get(key, [])
+    matches = sorted(matches, key=lambda m: m["date"], reverse=True)[:n]
+    out = []
+    for m in matches:
+        if m["home"] == home:
+            gh, ga = m["home_goals"], m["away_goals"]
+        else:
+            gh, ga = m["away_goals"], m["home_goals"]
+        result_for_home = "W" if gh > ga else ("L" if gh < ga else "D")
+        out.append({"date": m["date"], "score": f"{gh}-{ga}",
+                    "played_at": m["home"], "result_for_home": result_for_home})
+    return out
+
+
 def feature_importance(model):
     return pd.Series(model.feature_importances_, index=FEATURES).sort_values(ascending=False)
 
 
+def narrative_sentence(feat, groups, home, away, label):
+    """Turn the raw feature values + grouped importance % into a 1-2 sentence
+    plain-English explanation for THIS specific matchup, anchored to the
+    model's actual predicted label (not to any single feature's direction,
+    since the Random Forest combines features non-linearly)."""
+    predicted = {"Win": home, "Loss": away, "Draw": None}[label]
+    order = sorted(groups.items(), key=lambda kv: -kv[1])
+    reasons = []
+
+    for name, pct in order:
+        if name == "Elo rating gap":
+            d = feat["Elo_Diff"]
+            if abs(d) < 1:
+                continue
+            leader, trailer = (home, away) if d > 0 else (away, home)
+            reasons.append({"pct": pct, "leader": leader,
+                             "text": f"{leader}'s Elo rating is {abs(d):.0f} points higher than {trailer}'s"})
+
+        elif name == "Recent form (last 5 matches)":
+            d = feat["Form_Pts_Diff"]
+            if abs(d) < 0.05:
+                continue
+            leader, trailer = (home, away) if d > 0 else (away, home)
+            reasons.append({"pct": pct, "leader": leader,
+                             "text": f"{leader} has been in better recent form, averaging "
+                                     f"{abs(d):.1f} more points per match than {trailer} over their last 5 games"})
+
+        elif name == "Home advantage":
+            if feat["Home_Adv"] != 1:
+                continue
+            reasons.append({"pct": pct, "leader": home, "text": f"{home} gets a home-venue boost"})
+
+        elif name == "Other factors (head-to-head, experience)":
+            hd = feat["H2H_Diff"]
+            if abs(hd) < 0.05:
+                continue
+            leader, trailer = (home, away) if hd > 0 else (away, home)
+            reasons.append({"pct": pct, "leader": leader,
+                             "text": f"{leader} has the head-to-head edge over {trailer} in past meetings"})
+
+    if predicted is None:
+        if not reasons:
+            return "This matchup is very even across the board, which is why the model predicts a draw."
+        top = reasons[0]
+        return (f"The model predicts a draw because no single factor is decisive here — even the "
+                f"biggest one, {top['text']}, only accounts for about {top['pct']:.0f}% of the "
+                f"decision, and the rest roughly cancels out.")
+
+    if not reasons:
+        return (f"This matchup is genuinely close on paper, but the model still narrowly favours "
+                f"{predicted} once all the pre-match signals are combined.")
+
+    supporting = [r for r in reasons if r["leader"] == predicted]
+    opposing = [r for r in reasons if r["leader"] != predicted]
+    support_total = sum(r["pct"] for r in supporting)
+    oppose_total = sum(r["pct"] for r in opposing)
+
+    if supporting and support_total >= oppose_total:
+        top = supporting[0]
+        sentence = f"{top['text']} ({top['pct']:.0f}% of the decision)."
+        if len(supporting) > 1:
+            second = supporting[1]
+            sentence += f" It also helps that {second['text']} ({second['pct']:.0f}%)."
+        if opposing:
+            worst = opposing[0]
+            sentence += (f" This is despite the fact that {worst['text']}, which points the "
+                         f"other way ({worst['pct']:.0f}%) — the factors favouring {predicted} "
+                         f"simply carry more combined weight.")
+        return sentence
+
+    top = opposing[0] if opposing else reasons[0]
+    return (f"Interestingly, the clearest single signal — {top['text']} ({top['pct']:.0f}%) — "
+            f"actually favours {top['leader']}, not {predicted}. The model's prediction still tips "
+            f"towards {predicted} once all the pre-match signals are combined — a reminder that a "
+            f"Random Forest weighs features jointly, not by picking the single largest one.")
+
+
+def update_after_match(elo, latest_form, h2h, h2h_record, h2h_matches, history,
+                       home, away, home_goals, away_goals, date=None):
+    """Apply ONE new completed match to the already-fitted feature state,
+    without re-running the whole pipeline or retraining the classifier.
+
+    This is the 'incremental update' half of the answer to "can you feed in
+    new match data?" — it uses the exact same Elo formula as add_elo() and
+    the exact same rolling-form / H2H bookkeeping as add_form_and_h2h(), just
+    applied to a single extra match. All five inputs are mutated in place
+    AND returned, so the caller can decide whether to keep the update
+    (e.g. store it in st.session_state) or discard it.
+
+    Note: home-venue advantage is NOT an input here, on purpose — it is not
+    part of the Elo formula in add_elo() either (Elo only reacts to the
+    actual score), it is only ever used as a separate feature fed straight
+    into the classifier at prediction time. So it has nothing to update here.
+
+    The classifier itself is NOT retrained here — only the pre-match
+    features it reads (Elo, form, H2H) are refreshed, so the very next
+    prediction for these two teams reflects the new result immediately.
+    Periodically retraining the Random Forest on the growing dataset is a
+    separate, heavier step (see README / report "future work").
+    """
+    date = pd.Timestamp(date) if date is not None else pd.Timestamp.today().normalize()
+
+    # --- Elo (same formula as add_elo) ---
+    eh, ea = elo.get(home, BASE_ELO), elo.get(away, BASE_ELO)
+    exp_h = 1 / (1 + 10 ** ((ea - eh) / 400))
+    if   home_goals > away_goals: s_h = 1.0
+    elif home_goals < away_goals: s_h = 0.0
+    else:                         s_h = 0.5
+    margin = max(np.log(abs(home_goals - away_goals) + 1), 1)
+    elo[home] = eh + K * margin * (s_h - exp_h)
+    elo[away] = ea + K * margin * ((1 - s_h) - (1 - exp_h))
+
+    # --- Recent form (same points/letter convention as add_form_and_h2h) ---
+    if home_goals > away_goals:
+        pts_h, pts_a = 3, 0
+    elif home_goals < away_goals:
+        pts_h, pts_a = 0, 3
+    else:
+        pts_h, pts_a = 1, 1
+    letter_h = "W" if pts_h == 3 else ("D" if pts_h == 1 else "L")
+    letter_a = "W" if pts_a == 3 else ("D" if pts_a == 1 else "L")
+
+    def _bump_form(team, gf, ga, pts):
+        prev = latest_form.loc[team] if team in latest_form.index else pd.Series(
+            {"form_pts": 1.0, "form_gf": 1.0, "form_ga": 1.0, "matches_played": 0.0})
+        # simple rolling-5 approximation: nudge the average by 1/5th toward the new match
+        latest_form.loc[team, "form_pts"] = prev["form_pts"] + (pts - prev["form_pts"]) / 5
+        latest_form.loc[team, "form_gf"] = prev["form_gf"] + (gf - prev["form_gf"]) / 5
+        latest_form.loc[team, "form_ga"] = prev["form_ga"] + (ga - prev["form_ga"]) / 5
+        latest_form.loc[team, "matches_played"] = prev["matches_played"] + 1
+
+    _bump_form(home, home_goals, away_goals, pts_h)
+    _bump_form(away, away_goals, home_goals, pts_a)
+
+    # --- Head-to-head (same convention as add_form_and_h2h) ---
+    key = tuple(sorted([home, away]))
+    w, t = h2h.get(key, (0, 0))
+    first_win = 1 if ((key[0] == home and home_goals > away_goals) or
+                      (key[0] == away and away_goals > home_goals)) else 0
+    h2h[key] = (w + first_win, t + 1)
+
+    rec = h2h_record.get(key, {"first_wins": 0, "second_wins": 0, "draws": 0, "total": 0})
+    if home_goals == away_goals:
+        rec["draws"] += 1
+    elif first_win:
+        rec["first_wins"] += 1
+    else:
+        rec["second_wins"] += 1
+    rec["total"] += 1
+    h2h_record[key] = rec
+
+    h2h_matches.setdefault(key, []).append({
+        "date": date, "home": home, "away": away,
+        "home_goals": int(home_goals), "away_goals": int(away_goals),
+    })
+
+    # --- "history" table (used for the last-5 W/D/L tick display) ---
+    next_id = (history["match_id"].max() + 1) if len(history) else 0
+    new_rows = pd.DataFrame([
+        {"match_id": next_id, "Date": date, "Team": home, "GF": home_goals, "GA": away_goals,
+         "Pts": pts_h, "Result_Letter": letter_h},
+        {"match_id": next_id, "Date": date, "Team": away, "GF": away_goals, "GA": home_goals,
+         "Pts": pts_a, "Result_Letter": letter_a},
+    ])
+    history = pd.concat([history, new_rows], ignore_index=True)
+
+    return elo, latest_form, h2h, h2h_record, h2h_matches, history
+
+
 if __name__ == "__main__":
     # quick self-test
-    m, elo, lf, metrics, h2h, history, h2h_record = train_pipeline("international_matches1.csv")
+    m, elo, lf, metrics, h2h, history, h2h_record, h2h_matches = train_pipeline("international_matches1.csv")
     print("Metrics:", {k: round(v, 3) if isinstance(v, float) else v for k, v in metrics.items()})
     for h, a in [("Brazil", "Qatar"), ("Argentina", "France"), ("Germany", "Japan")]:
         r, lbl, p, f = predict_match(m, elo, lf, h, a, home_advantage=False, h2h=h2h)

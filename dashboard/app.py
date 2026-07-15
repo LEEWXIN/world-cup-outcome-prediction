@@ -72,15 +72,39 @@ div[data-baseweb="select"] * {{ color: {TEXT_PRIMARY} !important; }}
 """, unsafe_allow_html=True)
 
 
-# Train once, then cache so the app is instant on every interaction.
+# Train once, then cache so the app is instant on every interaction. This
+# returns the "base" state trained purely from the CSV.
 @st.cache_resource(show_spinner="Building features and training the model (first load only)...")
 def load_model():
-    mdl, elo, latest_form, metrics, h2h, history, h2h_record = M.train_pipeline("international_matches1.csv")
+    mdl, elo, latest_form, metrics, h2h, history, h2h_record, h2h_matches = M.train_pipeline("international_matches1.csv")
     teams = sorted(elo.keys())
-    return mdl, elo, latest_form, metrics, h2h, history, h2h_record, teams
+    return mdl, elo, latest_form, metrics, h2h, history, h2h_record, h2h_matches, teams
 
 
-mdl, elo, latest_form, metrics, h2h, history, h2h_record, teams = load_model()
+mdl, base_elo, base_latest_form, metrics, base_h2h, base_history, base_h2h_record, base_h2h_matches, teams = load_model()
+
+# The feature state (Elo / form / H2H) needs to be mutable across interactions
+# whenever the user logs a new match result, but the base state from
+# load_model() is cached and shared across ALL users/sessions — so we must
+# not mutate it directly. Instead we keep a per-session working copy in
+# st.session_state, seeded once from the base state, and every "Add match
+# result" submission updates this copy only. The classifier (`mdl`) is
+# intentionally NOT part of this — it stays fixed until a real retrain.
+if "elo" not in st.session_state:
+    st.session_state.elo = dict(base_elo)
+    st.session_state.latest_form = base_latest_form.copy()
+    st.session_state.h2h = dict(base_h2h)
+    st.session_state.h2h_record = {k: dict(v) for k, v in base_h2h_record.items()}
+    st.session_state.h2h_matches = {k: list(v) for k, v in base_h2h_matches.items()}
+    st.session_state.history = base_history.copy()
+    st.session_state.added_matches = []  # log of matches added this session, for display
+
+elo = st.session_state.elo
+latest_form = st.session_state.latest_form
+h2h = st.session_state.h2h
+h2h_record = st.session_state.h2h_record
+h2h_matches = st.session_state.h2h_matches
+history = st.session_state.history
 
 # ---------------------------------------------------------------------------
 # Top bar — eyebrow + title (left), three stat readouts (right)
@@ -136,6 +160,11 @@ h_elo, a_elo = feat["Home_Elo"], feat["Away_Elo"]
 h_share = h_elo / (h_elo + a_elo) * 100
 a_share = 100 - h_share
 
+h_rank, n_teams = M.elo_rank(elo, home)
+a_rank, _ = M.elo_rank(elo, away)
+h_rank_str = f"ELO {h_elo:.0f} · #{h_rank} of {n_teams}" if h_rank else f"ELO {h_elo:.0f}"
+a_rank_str = f"ELO {a_elo:.0f} · #{a_rank} of {n_teams}" if a_rank else f"ELO {a_elo:.0f}"
+
 last5_h = M.last5_string(history, home) or "-----"
 last5_a = M.last5_string(history, away) or "-----"
 tick_color = {"W": GREEN, "D": GRAY_FILL, "L": CLAY_FILL}
@@ -182,11 +211,11 @@ st.markdown(f"""
       <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
         <div>
           <div style="font-size:17px; font-weight:600; color:{TEXT_PRIMARY};">{home}</div>
-          <div style="font-family:'IBM Plex Mono',monospace; font-size:14px; color:{TEXT_MUTED};">ELO {h_elo:.0f}</div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:14px; color:{TEXT_MUTED};">{h_rank_str}</div>
         </div>
         <div style="text-align:right;">
           <div style="font-size:17px; font-weight:600; color:{TEXT_PRIMARY};">{away}</div>
-          <div style="font-family:'IBM Plex Mono',monospace; font-size:14px; color:{TEXT_MUTED};">ELO {a_elo:.0f}</div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:14px; color:{TEXT_MUTED};">{a_rank_str}</div>
         </div>
       </div>
       <div style="display:flex; height:9px; border-radius:4px; overflow:hidden; margin-bottom:16px;">
@@ -256,6 +285,12 @@ groups = {
 total = sum(groups.values())
 groups = {k: v / total * 100 for k, v in groups.items()}
 
+narrative = M.narrative_sentence(feat, groups, home, away, label)
+narrative_html = (
+    f"<div style='font-size:16px; line-height:1.6; color:{TEXT_PRIMARY}; "
+    f"margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid {DIVIDER};'>{narrative}</div>"
+)
+
 bullets_html = "".join(
     f"<div style='display:flex; gap:8px; margin-bottom:10px;'>"
     f"<span style='color:{GREEN}; font-family:\"IBM Plex Mono\",monospace;'>—</span>"
@@ -277,6 +312,7 @@ st.markdown(f"""
   <div class="grid-2">
     <div>
       <div class="eyebrow">Why this prediction</div>
+      {narrative_html}
       {bullets_html}
     </div>
     <div class="divider-left">
@@ -289,6 +325,82 @@ st.markdown(f"""
 
 with st.expander("Show the raw feature values fed to the model"):
     st.dataframe(pd.DataFrame([feat]).T.rename(columns={0: "value"}))
+
+past_meetings = M.h2h_match_list(h2h_matches, home, away, n=10)
+if past_meetings:
+    with st.expander(f"Show the last {len(past_meetings)} meetings between {home} and {away}"):
+        rows_html = ""
+        for m in past_meetings:
+            r_color = tick_color.get(m["result_for_home"], TEXT_MUTED)
+            rows_html += (
+                f"<div style='display:flex; justify-content:space-between; padding:6px 0; "
+                f"border-bottom:1px solid {DIVIDER}; font-family:\"IBM Plex Mono\",monospace; font-size:13px;'>"
+                f"<span style='color:{TEXT_MUTED};'>{m['date'].strftime('%Y-%m-%d')}</span>"
+                f"<span style='color:{TEXT_SECOND};'>played at {m['played_at']}</span>"
+                f"<span style='font-weight:600; color:{TEXT_PRIMARY};'>{home} {m['score']} "
+                f"<span style='color:{r_color};'>({m['result_for_home']})</span></span>"
+                f"</div>"
+            )
+        st.markdown(rows_html, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Add a completed match result — incremental Elo/form/H2H update, no full
+# retrain. Answers the "can you feed in new match data?" question: the very
+# next prediction for these two teams reflects the new result immediately,
+# because Elo/form/H2H are the pre-match features the classifier reads, and
+# those get refreshed here. The classifier itself keeps its existing
+# weights until a real periodic retrain (see report future-work).
+# ---------------------------------------------------------------------------
+with st.expander("➕ Add a completed match result (update Elo & form live)"):
+    st.caption(
+        "This updates Elo, recent form, and head-to-head for the two teams "
+        "immediately — the same formulas used to build the training data — "
+        "without retraining the Random Forest itself. Try it, then re-pick "
+        "the same two teams above and watch the numbers move."
+    )
+    with st.form("add_match_form", clear_on_submit=False):
+        c1, c2, c3 = st.columns(3)
+        new_home = c1.selectbox("Home team", teams, index=teams.index(home), key="new_home")
+        new_away = c2.selectbox("Away team", teams, index=teams.index(away), key="new_away")
+        new_date = c3.date_input("Date", value=pd.Timestamp.today())
+        c4, c5 = st.columns(2)
+        new_hg = c4.number_input("Home goals", min_value=0, max_value=30, value=1, step=1)
+        new_ag = c5.number_input("Away goals", min_value=0, max_value=30, value=1, step=1)
+        submitted = st.form_submit_button("Add result & update model inputs")
+
+    if submitted:
+        if new_home == new_away:
+            st.error("Home and away team must be different.")
+        else:
+            (st.session_state.elo, st.session_state.latest_form, st.session_state.h2h,
+             st.session_state.h2h_record, st.session_state.h2h_matches, st.session_state.history) = (
+                M.update_after_match(
+                    st.session_state.elo, st.session_state.latest_form, st.session_state.h2h,
+                    st.session_state.h2h_record, st.session_state.h2h_matches, st.session_state.history,
+                    home=new_home, away=new_away, home_goals=int(new_hg), away_goals=int(new_ag),
+                    date=new_date,
+                )
+            )
+            st.session_state.added_matches.append(
+                f"{new_date} — {new_home} {new_hg}-{new_ag} {new_away}"
+            )
+            st.success(
+                f"Added: {new_home} {new_hg}-{new_ag} {new_away}. "
+                f"Elo, form and head-to-head updated — pick these two teams above to see it."
+            )
+            st.rerun()
+
+    if st.session_state.added_matches:
+        st.markdown(f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:12px; "
+                    f"color:{TEXT_MUTED}; margin-top:10px;'>Added this session:</div>", unsafe_allow_html=True)
+        for m in st.session_state.added_matches:
+            st.markdown(f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:13px; "
+                        f"color:{TEXT_SECOND};'>• {m}</div>", unsafe_allow_html=True)
+        st.caption(
+            "Note: these updates live only in this browser session (Streamlit resets state "
+            "on restart). For them to persist and to improve the classifier itself, the new "
+            "matches would need to be appended to the CSV and the model periodically retrained."
+        )
 
 st.markdown(f"""
 <div style="text-align:center; margin-top:28px; padding-top:18px; border-top:1px solid {DIVIDER};
