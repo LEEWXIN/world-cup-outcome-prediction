@@ -14,7 +14,7 @@ import streamlit as st
 import pandas as pd
 import model as M
 
-st.set_page_config(page_title="Match Outcome Predictor", page_icon="⚽", layout="centered")
+st.set_page_config(page_title="Match Outcome Predictor", page_icon="soccer", layout="centered")
 
 def html(s: str) -> str:
     """Strip leading whitespace from every line of a multi-line HTML/CSS
@@ -26,9 +26,9 @@ def html(s: str) -> str:
     return "\n".join(line.lstrip() for line in s.strip("\n").split("\n"))
 
 # ---------------------------------------------------------------------------
-# Design tokens — restyled to match the "Match Outcome Predictor" reference
+# Design tokens - restyled to match the "Match Outcome Predictor" reference
 # mockup (blue accent, IBM Plex Sans + Mono, tighter/compact spacing).
-# Functionality below is unchanged — this is a CSS-only pass.
+# Functionality below is unchanged - this is a CSS-only pass.
 # ---------------------------------------------------------------------------
 PAGE_BG      = "oklch(98% 0.004 95)"
 CARD_BG      = "#ffffff"
@@ -49,7 +49,7 @@ GRAY_TEXT    = "oklch(45% 0.01 95)"
 TRACK_BG     = "oklch(93% 0.005 95)"
 SUCCESS_BG   = "oklch(94% 0.03 155)"
 SUCCESS_TEXT = "oklch(32% 0.06 155)"
-FORM_WIN     = "oklch(58% 0.13 150)"    # distinct green for "W" form tiles — NOT the theme accent
+FORM_WIN     = "oklch(58% 0.13 150)"    # distinct green for "W" form tiles - NOT the theme accent
 GREEN        = FORM_WIN                 # kept as an alias so downstream "GREEN" references (form
 GREEN_LIGHT  = BLUE_LIGHT                # tiles, bullet markers) stay green, matching the reference mockup
 
@@ -61,7 +61,7 @@ st.markdown(html(f"""
 html, body, [class*="css"] {{ color: {TEXT_PRIMARY} !important; font-family: 'IBM Plex Sans', sans-serif !important; }}
 h1, h2, h3 {{ font-family: 'IBM Plex Sans', sans-serif !important; font-weight: 700 !important; letter-spacing: -0.01em; color: {TEXT_PRIMARY} !important; }}
 
-.block-container {{ max-width: 1080px; padding-top: 32px; padding-bottom: 60px; }}
+.block-container {{ max-width: 1080px; padding-top: 72px; padding-bottom: 60px; }}
 
 /* restyle native Streamlit selects + checkbox to match the reference mockup */
 div[data-baseweb="select"] > div {{
@@ -116,11 +116,11 @@ mdl, base_elo, base_latest_form, metrics, base_h2h, base_history, base_h2h_recor
 
 # The feature state (Elo / form / H2H) needs to be mutable across interactions
 # whenever the user logs a new match result, but the base state from
-# load_model() is cached and shared across ALL users/sessions — so we must
+# load_model() is cached and shared across ALL users/sessions - so we must
 # not mutate it directly. Instead we keep a per-session working copy in
 # st.session_state, seeded once from the base state, and every "Add match
 # result" submission updates this copy only. The classifier (`mdl`) is
-# intentionally NOT part of this — it stays fixed until a real retrain.
+# intentionally NOT part of this - it stays fixed until a real retrain.
 if "elo" not in st.session_state:
     st.session_state.elo = dict(base_elo)
     st.session_state.latest_form = base_latest_form.copy()
@@ -138,7 +138,7 @@ h2h_matches = st.session_state.h2h_matches
 history = st.session_state.history
 
 # ---------------------------------------------------------------------------
-# Top bar — eyebrow + title (left), three stat readouts (right)
+# Top bar - eyebrow + title (left), three stat readouts (right)
 # ---------------------------------------------------------------------------
 st.markdown(html(f"""
 <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap;
@@ -168,24 +168,51 @@ st.markdown(html(f"""
 """), unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# Control row — team pickers + home-venue checkbox
+# Control row - team pickers + home-venue checkbox
 # ---------------------------------------------------------------------------
 col_a, col_vs, col_b, col_chk = st.columns([4, 1, 4, 4])
 default_h = teams.index("Argentina") if "Argentina" in teams else 0
 default_a = teams.index("Brazil") if "Brazil" in teams else 1
-home = col_a.selectbox("Home team", teams, index=default_h, label_visibility="collapsed")
+home_sel = col_a.selectbox("Home team", teams, index=default_h, label_visibility="collapsed")
 col_vs.markdown(f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:14px; color:{TEXT_MUTED}; text-align:center; padding-top:8px;'>vs</div>", unsafe_allow_html=True)
-away = col_b.selectbox("Away team", teams, index=default_a, label_visibility="collapsed")
-home_adv = col_chk.checkbox("Home venue", value=True)
+away_sel = col_b.selectbox("Away team", teams, index=default_a, label_visibility="collapsed")
+home_adv_sel = col_chk.checkbox("Home venue", value=True)
 
-if home == away:
+same_teams = (home_sel == away_sel)
+if same_teams:
     st.warning("Please pick two different teams.")
-    st.stop()
+
+predict_clicked = st.button("Predict this matchup", type="primary",
+                            use_container_width=True, disabled=same_teams)
+
+# Everything below (the whole card, the "why" panel, the raw-features
+# expander, and the "Add a completed match result" section) is driven ONLY
+# by this confirmed pair - it changes exactly when this button is clicked,
+# and only then. It has no dependency on the "Add a completed match result"
+# expander further down the page; that section reads this confirmed pair,
+# it never feeds back into it. On first load (before any click) it shows a
+# prediction for the default pair so the page isn't empty.
+if "pred_home" not in st.session_state:
+    st.session_state.pred_home = home_sel
+    st.session_state.pred_away = away_sel
+    st.session_state.pred_home_adv = home_adv_sel
+
+if predict_clicked and not same_teams:
+    st.session_state.pred_home = home_sel
+    st.session_state.pred_away = away_sel
+    st.session_state.pred_home_adv = home_adv_sel
+
+home = st.session_state.pred_home
+away = st.session_state.pred_away
+home_adv = st.session_state.pred_home_adv
+
+venue_note = "" if home_adv else " (neutral venue)"
+st.caption(f"Showing prediction for: **{home}** vs **{away}**{venue_note}")
 
 readable, label, proba, feat = M.predict_match(mdl, elo, latest_form, home, away, home_adv, h2h=h2h)
 
 # ---------------------------------------------------------------------------
-# Main terminal panel — team comparison + prediction (left) | probabilities (right)
+# Main terminal panel - team comparison + prediction (left) | probabilities (right)
 # ---------------------------------------------------------------------------
 h_elo, a_elo = feat["Home_Elo"], feat["Away_Elo"]
 h_share = h_elo / (h_elo + a_elo) * 100
@@ -193,8 +220,8 @@ a_share = 100 - h_share
 
 h_rank, n_teams = M.elo_rank(elo, home)
 a_rank, _ = M.elo_rank(elo, away)
-h_rank_str = f"ELO {h_elo:.0f} · #{h_rank} of {n_teams}" if h_rank else f"ELO {h_elo:.0f}"
-a_rank_str = f"ELO {a_elo:.0f} · #{a_rank} of {n_teams}" if a_rank else f"ELO {a_elo:.0f}"
+h_rank_str = f"ELO {h_elo:.0f} - #{h_rank} of {n_teams}" if h_rank else f"ELO {h_elo:.0f}"
+a_rank_str = f"ELO {a_elo:.0f} - #{a_rank} of {n_teams}" if a_rank else f"ELO {a_elo:.0f}"
 
 last5_h = M.last5_string(history, home) or "-----"
 last5_a = M.last5_string(history, away) or "-----"
@@ -232,8 +259,8 @@ if htot == 0:
 else:
     h2h_html = (f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:13px; "
                 f"color:{TEXT_SECOND}; margin-bottom:18px;'>Head-to-head ({htot} matches): "
-                f"<span style='color:{TEXT_PRIMARY}; font-weight:600;'>{home} {hw}W</span> — "
-                f"{hd}D — <span style='color:{TEXT_PRIMARY}; font-weight:600;'>{away} {aw}W</span></div>")
+                f"<span style='color:{TEXT_PRIMARY}; font-weight:600;'>{home} {hw}W</span> - "
+                f"{hd}D - <span style='color:{TEXT_PRIMARY}; font-weight:600;'>{away} {aw}W</span></div>")
 
 st.markdown(html(f"""
 <div class="card">
@@ -295,14 +322,14 @@ st.markdown(html(f"""
 """), unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# Why panel — explanation bullets (left) | global feature importance (right)
+# Why panel - explanation bullets (left) | global feature importance (right)
 # ---------------------------------------------------------------------------
 elo_gap = feat["Elo_Diff"]
 stronger, weaker = (home, away) if elo_gap > 0 else (away, home)
 bullet1 = f"{stronger} holds a {abs(elo_gap):.0f}-point Elo edge over {weaker}."
 bullet2 = f"Last 5: {home} {last5_h} vs {away} {last5_a}."
 bullet3 = (f"{home} gets a home boost, equivalent to roughly +100 Elo points."
-           if home_adv else "Neutral venue — no home advantage applied.")
+           if home_adv else "Neutral venue - no home advantage applied.")
 
 # Real global feature importance from the trained model, grouped into the
 # four categories the design calls for (not static placeholder numbers).
@@ -324,7 +351,7 @@ narrative_html = (
 
 bullets_html = "".join(
     f"<div style='display:flex; gap:8px; margin-bottom:10px;'>"
-    f"<span style='color:{BLUE}; font-family:\"IBM Plex Mono\",monospace;'>—</span>"
+    f"<span style='color:{BLUE}; font-family:\"IBM Plex Mono\",monospace;'>-</span>"
     f"<span style='font-family:\"IBM Plex Mono\",monospace; font-size:15px; line-height:1.6; color:{TEXT_SECOND};'>{b}</span></div>"
     for b in [bullet1, bullet2, bullet3]
 )
@@ -375,24 +402,38 @@ if past_meetings:
         st.markdown(rows_html, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# Add a completed match result — incremental Elo/form/H2H update, no full
+# Add a completed match result - incremental Elo/form/H2H update, no full
 # retrain. Answers the "can you feed in new match data?" question: the very
 # next prediction for these two teams reflects the new result immediately,
 # because Elo/form/H2H are the pre-match features the classifier reads, and
 # those get refreshed here. The classifier itself keeps its existing
 # weights until a real periodic retrain (see report future-work).
 # ---------------------------------------------------------------------------
-with st.expander("➕ Add a completed match result (update Elo & form live)"):
+# Keep the "Add match" form's default teams in sync with whichever pair is
+# selected in the top dropdowns. Without this, the widgets below (which have
+# explicit keys so Streamlit remembers their value across reruns) would get
+# "stuck" on whatever pair was showing the first time this expander rendered,
+# and passing index=teams.index(home) again on later reruns would silently
+# be ignored - a classic Streamlit gotcha. This block runs BEFORE the widgets
+# are created, so it only overrides the stored value when the top pair has
+# actually changed since the last run; any in-progress edit the user makes
+# inside the form itself is left alone until that happens.
+if st.session_state.get("_synced_pair") != (home, away):
+    st.session_state["new_home"] = home
+    st.session_state["new_away"] = away
+    st.session_state["_synced_pair"] = (home, away)
+
+with st.expander("Add a completed match result (update Elo & form live)"):
     st.caption(
         "This updates Elo, recent form, and head-to-head for the two teams "
-        "immediately — the same formulas used to build the training data — "
+        "immediately - the same formulas used to build the training data - "
         "without retraining the Random Forest itself. Try it, then re-pick "
         "the same two teams above and watch the numbers move."
     )
     with st.form("add_match_form", clear_on_submit=False):
         c1, c2, c3 = st.columns(3)
-        new_home = c1.selectbox("Home team", teams, index=teams.index(home), key="new_home")
-        new_away = c2.selectbox("Away team", teams, index=teams.index(away), key="new_away")
+        new_home = c1.selectbox("Home team", teams, key="new_home")
+        new_away = c2.selectbox("Away team", teams, key="new_away")
         new_date = c3.date_input("Date", value=pd.Timestamp.today())
         c4, c5 = st.columns(2)
         new_hg = c4.number_input("Home goals", min_value=0, max_value=30, value=1, step=1)
@@ -413,11 +454,11 @@ with st.expander("➕ Add a completed match result (update Elo & form live)"):
                 )
             )
             st.session_state.added_matches.append(
-                f"{new_date} — {new_home} {new_hg}-{new_ag} {new_away}"
+                f"{new_date} - {new_home} {new_hg}-{new_ag} {new_away}"
             )
             st.success(
                 f"Added: {new_home} {new_hg}-{new_ag} {new_away}. "
-                f"Elo, form and head-to-head updated — pick these two teams above to see it."
+                f"Elo, form and head-to-head updated - pick these two teams above to see it."
             )
             st.rerun()
 
@@ -426,7 +467,7 @@ with st.expander("➕ Add a completed match result (update Elo & form live)"):
                     f"color:{TEXT_MUTED}; margin-top:10px;'>Added this session:</div>", unsafe_allow_html=True)
         for m in st.session_state.added_matches:
             st.markdown(f"<div style='font-family:\"IBM Plex Mono\",monospace; font-size:13px; "
-                        f"color:{TEXT_SECOND};'>• {m}</div>", unsafe_allow_html=True)
+                        f"color:{TEXT_SECOND};'>- {m}</div>", unsafe_allow_html=True)
         st.caption(
             "Note: these updates live only in this browser session (Streamlit resets state "
             "on restart). For them to persist and to improve the classifier itself, the new "
@@ -436,7 +477,7 @@ with st.expander("➕ Add a completed match result (update Elo & form live)"):
 st.markdown(html(f"""
 <div style="text-align:center; margin-top:28px; padding-top:18px; border-top:1px solid {DIVIDER};
             font-family:'IBM Plex Mono',monospace; font-size:12px; color:{TEXT_MUTED};">
-  Trained on {metrics['n_train'] + metrics['n_test']:,} international matches, 1872–2022 ·
-  Source: Kaggle — International Football Results (martj42)
+  Trained on {metrics['n_train'] + metrics['n_test']:,} international matches, 1872-2022 -
+  Source: Kaggle - International Football Results (martj42)
 </div>
 """), unsafe_allow_html=True)
