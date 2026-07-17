@@ -24,10 +24,11 @@ world-cup-outcome-prediction/
 ├── .gitignore
 │
 ├── data/                         Datasets (see "Dataset source" below)
-│   ├── international_matches1.csv
-│   ├── world_cup_matches1.csv
-│   ├── world_cups1.csv
-│   └── 2022_world_cup_matches1.csv
+│   ├── international_matches1.csv  Main modelling dataset (martj42)
+│   ├── world_cups1.csv           Tournament summaries (abhijitdahatonde)
+│   ├── 2022_world_cup_matches1.csv  2022 fixtures, no scores (abhijitdahatonde)
+│   ├── goalscorers.csv           Bonus EDA (Section 8c) — not a model feature
+│   └── shootouts.csv             Bonus EDA (Section 8c) — not a model feature
 │
 ├── notebook/
 │   └── World_Cup_Prediction.ipynb   Main deliverable — cleaning, EDA,
@@ -60,6 +61,21 @@ Note: the dataset's own page title now reads "International football results
 from 1872 to 2026" — Kaggle keeps a dataset's original URL slug even after
 the maintainer updates its contents, which is why the link above still says
 "2017" even though the data (and page title) go through July 2026.
+
+The same source also publishes two companion files, `goalscorers.csv`
+(goal-by-goal event detail) and `shootouts.csv` (penalty shootout results),
+used for bonus EDA in Section 8c of the notebook. Neither is used as a model
+feature, since that detail only exists after a match is played.
+
+Two further files come from a second Kaggle source, "FIFA World Cup All
+Dataset" (user: abhijitdahatonde):
+https://www.kaggle.com/datasets/abhijitdahatonde/fifa-world-cup-all-dataset
+— `world_cups1.csv` (per-tournament winner/host/runner-up, used in the
+notebook's "titles by nation" chart) and `2022_world_cup_matches1.csv` (the
+2022 fixture list, used for the live-prediction demo). This curated
+tournament-level detail isn't derivable from martj42's raw match list alone,
+so it's kept as-is from the original source rather than reconstructed. Every
+other chart and the model itself use only the martj42 data.
 
 ## Setup instructions
 
