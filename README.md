@@ -17,7 +17,7 @@ behind it.
 ## Repository structure
 
 ```
-World-Cup-Match-Predictor/
+world-cup-outcome-prediction/
 ├── README.md
 ├── requirements.txt
 ├── Dockerfile
@@ -37,6 +37,8 @@ World-Cup-Match-Predictor/
 ├── dashboard/                    Bonus feature — interactive Streamlit app
 │   ├── app.py                    UI — dropdowns, prediction, explanation
 │   ├── model.py                  Same Elo/feature/RF pipeline as the notebook
+│   ├── precompute.py             Pre-trains the model at Docker build time
+│   ├── international_matches1.csv  Copy of the dataset for standalone runs
 │   ├── DASHBOARD_GUIDE.md        Demo script and Q&A prep
 │   └── .streamlit/config.toml    Theme config
 │
@@ -53,6 +55,11 @@ World-Cup-Match-Predictor/
 International Football Results (1872–2026), Kaggle (user: martj42),
 continuously-updated snapshot:
 https://www.kaggle.com/datasets/martj42/international-football-results-from-1872-to-2017
+
+Note: the dataset's own page title now reads "International football results
+from 1872 to 2026" — Kaggle keeps a dataset's original URL slug even after
+the maintainer updates its contents, which is why the link above still says
+"2017" even though the data (and page title) go through July 2026.
 
 ## Setup instructions
 
@@ -101,18 +108,24 @@ See `dashboard/DASHBOARD_GUIDE.md` for the full walkthrough and demo script.
 
 ## Key results
 
-- Random Forest is the selected model: 59.6% accuracy vs a 47.6% baseline
-  (always predicting the majority class, Win).
+- Random Forest is the selected model: 59.7% accuracy vs a 47.6% baseline
+  (always predicting the majority class, Win). All three models (Logistic
+  Regression, Random Forest, Gradient Boosting) land within 0.006 macro-F1
+  of each other; Random Forest is chosen for its native feature importances
+  and because it is the same model used in the dashboard, not because it
+  scored highest.
 - Elo rating difference is the dominant predictor of match outcome,
   confirmed independently by Random Forest feature importance, Logistic
   Regression coefficient direction, and permutation importance.
-- Known limitation: per-class recall for Draw is low (0.02) due to class
+- Known limitation: per-class recall for Draw is low (0.01) due to class
   imbalance — see Section 4.1 of the report for the full breakdown and
   proposed remedies.
 - Live validation: Section 4.4 of the report (and Section 8b of the
   notebook) predicts the France v Spain 2026 World Cup semifinal, made
   before kickoff on 14 July — a genuine forecast that fixes the timing
-  issue disclosed in Section 4.3's 2022 example.
+  issue disclosed in Section 4.3's 2022 example. Update: the match has
+  since been played — Spain won 2–0 — and the model's prediction favoured
+  Spain, so the directional call was correct.
 
 ## AI usage disclosure
 
